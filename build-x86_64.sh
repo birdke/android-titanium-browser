@@ -36,6 +36,8 @@ export PATH="$SCRIPT_DIR/depot_tools:$PATH"
 mkdir -p chromium/src/out/X64
 cd chromium/src
 git init
+git config user.name "Titanium x86_64 Actions"
+git config user.email "actions@users.noreply.github.com"
 git remote add origin "$CHROMIUM_SOURCE"
 git fetch --depth 1 "$CHROMIUM_SOURCE" "+refs/tags/$VERSION:chromium_$VERSION"
 git checkout --detach "$VERSION"

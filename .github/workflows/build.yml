@@ -1,79 +1,110 @@
-name: Build
+name: Build Titanium x86_64
 
 on:
   workflow_dispatch:
     inputs:
-      runner:
-        description: 'Runner'
+      build_jobs:
+        description: Local compile jobs (1-4)
         required: true
-        type: string
-        default: 'self-hosted' # ubuntu-latest
-  schedule:
-    - cron: '0 0 */16 * *'
+        type: choice
+        default: '3'
+        options:
+          - '2'
+          - '3'
+          - '4'
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
-  build:
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner || 'self-hosted' }}
+  build-x86_64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
     steps:
-      - uses: actions/checkout@v5
+      - name: Reclaim preinstalled runner space
+        uses: endersonmenezes/free-disk-space@cc5a57aa862b7769888199b7e4e012b0c8440b92 # v3
         with:
-          submodules: true
-      
-      - name: Update 
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable chromedriver google-cloud-sdk firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-* gfortran* mongodb-* mono-* monodoc-* unixodbc-dev ant* perl apache2* nginx php* r-base* ruby*"
+          remove_packages_one_command: true
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia* /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle* /usr/local/bin/azcopy /usr/share/kotlinc /usr/share/apache-maven-* /usr/local/share/gecko_driver"
+
+      - name: Combine root and /mnt free space
+        shell: bash
         run: |
-          cd vanadium
-          git fetch --tags
-          git checkout $(git tag | sort -V | tail -n1)
-          cd ..
-          git add vanadium
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          if ! git diff --staged --quiet; then
-            git commit -am "update"
-            git push
+          set -euo pipefail
+          sudo docker system prune --all --force --volumes
+          sudo apt-get update
+          sudo apt-get install -y lvm2
+
+          gib=$((1024 * 1024 * 1024))
+          root_free=$(df --output=avail -B1 / | tail -1 | tr -d ' ')
+          mnt_free=$(df --output=avail -B1 /mnt | tail -1 | tr -d ' ')
+          root_image=$((root_free - 8 * gib))
+          mnt_image=$((mnt_free - 1 * gib))
+          if (( root_image < gib || mnt_image < gib )); then
+            echo "Not enough space to create the build volume" >&2
+            df -hT
+            exit 10
           fi
 
-      - name: Set ENV
-        run: | 
-          chmod +x *.sh
-          echo "unix_time=$(date +%s)" >> $GITHUB_ENV
-    
-      - name: Build
+          sudo truncate -s "$root_image" /var/tmp/titanium-root.img
+          sudo truncate -s "$mnt_image" /mnt/titanium-mnt.img
+          root_loop=$(sudo losetup -f --show /var/tmp/titanium-root.img)
+          mnt_loop=$(sudo losetup -f --show /mnt/titanium-mnt.img)
+          sudo pvcreate "$root_loop" "$mnt_loop"
+          sudo vgcreate titanium-build-vg "$root_loop" "$mnt_loop"
+          sudo lvcreate -n workspace -l 100%FREE titanium-build-vg
+          sudo mkfs.ext4 -F -m 0 /dev/titanium-build-vg/workspace
+
+          sudo mkdir -p /mnt/titanium-build-volume
+          sudo mount /dev/titanium-build-vg/workspace /mnt/titanium-build-volume
+          sudo mkdir -p /mnt/titanium-build-volume/workspace "$GITHUB_WORKSPACE"
+          sudo chown -R "$USER:$(id -gn)" /mnt/titanium-build-volume/workspace
+          sudo mount --bind /mnt/titanium-build-volume/workspace "$GITHUB_WORKSPACE"
+
+          sudo fallocate -l 4G /mnt/titanium-build-volume/titanium.swap
+          sudo chmod 600 /mnt/titanium-build-volume/titanium.swap
+          sudo mkswap /mnt/titanium-build-volume/titanium.swap
+          sudo swapon /mnt/titanium-build-volume/titanium.swap
+
+          available_gib=$(df --output=avail -BG "$GITHUB_WORKSPACE" | tail -1 | tr -dc '0-9')
+          if (( available_gib < 108 )); then
+            echo "Expanded workspace has only ${available_gib} GiB available" >&2
+            df -hT
+            exit 11
+          fi
+          df -hT
+          swapon --show
+
+      - name: Checkout Titanium source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Build signed x86_64 APK
         env:
-            DEBIAN_FRONTEND: noninteractive
-            LOCAL_TEST_JKS: ${{ secrets.LOCAL_TEST_JKS }}
-            STORE_TEST_JKS: ${{ secrets.STORE_TEST_JKS }}
+          DEBIAN_FRONTEND: noninteractive
+          LOCAL_TEST_JKS: ${{ secrets.LOCAL_TEST_JKS }}
+          STORE_TEST_JKS: ${{ secrets.STORE_TEST_JKS }}
+          TITANIUM_BUILD_CACHE_DIR: ${{ github.workspace }}/.build-cache
+          TITANIUM_BUILD_JOBS: ${{ inputs.build_jobs }}
         run: |
-          ./build.sh
+          chmod +x ./*.sh
+          ./build-x86_64.sh
 
-      - name: Set
-        run: |
-          export VERSION=$(find chromium/src/out/release -name '*arm64-v8a.apk' | sed 's/.*\///;s/\-arm64-v8a.apk$//')
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          mv $(find chromium/src/out/release -name '*arm64-v8a.aab') $VERSION-${{ env.unix_time }}-arm64-v8a.aab
-          mv $(find chromium/src/out/release -name '*arm64-v8a.apk') $VERSION-${{ env.unix_time }}-arm64-v8a.apk
-          mv $(find chromium/src/out/release -name '*armeabi-v7a.apk') $VERSION-${{ env.unix_time }}-armeabi-v7a.apk
-
-      - name: Publish
-        uses: softprops/action-gh-release@v2
+      - name: Upload signed APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          name: v${{ env.VERSION }}
-          tag_name: v${{ env.VERSION }}
-          files: |
-            ${{ env.VERSION }}-${{ env.unix_time }}-arm64-v8a.aab
-            ${{ env.VERSION }}-${{ env.unix_time }}-arm64-v8a.apk
-            ${{ env.VERSION }}-${{ env.unix_time }}-armeabi-v7a.apk
-
-      - name: Attest
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-path: |
-            ${{ env.VERSION }}-${{ env.unix_time }}-arm64-v8a.aab
-            ${{ env.VERSION }}-${{ env.unix_time }}-arm64-v8a.apk
-            ${{ env.VERSION }}-${{ env.unix_time }}-armeabi-v7a.apk
+          name: titanium-${{ github.run_id }}-x86_64
+          path: |
+            chromium/src/out/release/*-x86_64.apk
+            chromium/src/out/release/*-x86_64.apk.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1

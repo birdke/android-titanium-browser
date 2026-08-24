@@ -3,6 +3,8 @@
 chromium/
 depot_tools/
 keys/
+.build-cache/
+.local-signing/
 
 *.aab
 *.apk

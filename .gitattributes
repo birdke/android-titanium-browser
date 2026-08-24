@@ -1,0 +1,6 @@
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.gn text eol=lf
+*.gni text eol=lf
+.gclient text eol=lf

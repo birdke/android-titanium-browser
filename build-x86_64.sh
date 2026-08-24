@@ -15,6 +15,8 @@ export VERSION
 VERSION=$(grep -m1 -o '[0-9]\+\(\.[0-9]\+\)\{3\}' vanadium/args.gn)
 export CHROMIUM_SOURCE=https://chromium.googlesource.com/chromium/src.git
 export DEBIAN_FRONTEND=noninteractive
+export GIT_COMMITTER_NAME="Titanium x86_64 Actions"
+export GIT_COMMITTER_EMAIL="actions@users.noreply.github.com"
 
 TITANIUM_BUILD_CACHE_DIR=${TITANIUM_BUILD_CACHE_DIR:-$SCRIPT_DIR/.build-cache}
 TITANIUM_BUILD_JOBS=${TITANIUM_BUILD_JOBS:-3}

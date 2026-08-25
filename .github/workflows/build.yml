@@ -7,7 +7,7 @@ on:
         description: Local compile jobs (1-4)
         required: true
         type: choice
-        default: '2'
+        default: '4'
         options:
           - '2'
           - '3'
@@ -19,7 +19,7 @@ permissions:
 jobs:
   build-x86_64:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 360
     steps:
       - name: Reclaim preinstalled runner space
         uses: endersonmenezes/free-disk-space@cc5a57aa862b7769888199b7e4e012b0c8440b92 # v3
@@ -67,10 +67,19 @@ jobs:
           sudo chown -R "$USER:$(id -gn)" /mnt/titanium-build-volume/workspace
           sudo mount --bind /mnt/titanium-build-volume/workspace "$GITHUB_WORKSPACE"
 
-          sudo fallocate -l 12G /mnt/titanium-build-volume/titanium.swap
+          sudo fallocate -l 24G /mnt/titanium-build-volume/titanium.swap
           sudo chmod 600 /mnt/titanium-build-volume/titanium.swap
           sudo mkswap /mnt/titanium-build-volume/titanium.swap
           sudo swapon /mnt/titanium-build-volume/titanium.swap
+          sudo sysctl -w vm.swappiness=80
+
+          mapfile -t runner_pids < <(pgrep -f 'Runner\.(Listener|Worker)' || true)
+          for runner_pid in "${runner_pids[@]}"; do
+            if sudo test -e "/proc/$runner_pid/oom_score_adj"; then
+              echo -1000 | sudo tee "/proc/$runner_pid/oom_score_adj" >/dev/null || true
+            fi
+          done
+          echo "Protected runner PIDs: ${runner_pids[*]:-none}"
 
           available_gib=$(df --output=avail -BG "$GITHUB_WORKSPACE" | tail -1 | tr -dc '0-9')
           if (( available_gib < 108 )); then
@@ -94,9 +103,32 @@ jobs:
           STORE_TEST_JKS: ${{ secrets.STORE_TEST_JKS }}
           TITANIUM_BUILD_CACHE_DIR: ${{ github.workspace }}/.build-cache
           TITANIUM_BUILD_JOBS: ${{ inputs.build_jobs }}
+          MALLOC_ARENA_MAX: '2'
         run: |
+          set -euo pipefail
+          echo 250 | sudo tee "/proc/$$/oom_score_adj" >/dev/null
+
+          monitor_resources() {
+            while true; do
+              echo "::group::Resource snapshot $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+              free -h
+              swapon --show
+              df -h "$GITHUB_WORKSPACE"
+              ps -eo pid,ppid,ni,%cpu,%mem,rss,comm --sort=-rss | head -n 12 || true
+              echo "::endgroup::"
+              sleep 300
+            done
+          }
+          monitor_resources &
+          resource_monitor_pid=$!
+          cleanup_monitor() {
+            kill "$resource_monitor_pid" 2>/dev/null || true
+            wait "$resource_monitor_pid" 2>/dev/null || true
+          }
+          trap cleanup_monitor EXIT
+
           chmod +x ./*.sh
-          ./build-x86_64.sh
+          nice -n 5 ./build-x86_64.sh
 
       - name: Upload signed APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

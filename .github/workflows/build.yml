@@ -7,7 +7,7 @@ on:
         description: Local compile jobs (1-4)
         required: true
         type: choice
-        default: '3'
+        default: '2'
         options:
           - '2'
           - '3'
@@ -67,7 +67,7 @@ jobs:
           sudo chown -R "$USER:$(id -gn)" /mnt/titanium-build-volume/workspace
           sudo mount --bind /mnt/titanium-build-volume/workspace "$GITHUB_WORKSPACE"
 
-          sudo fallocate -l 4G /mnt/titanium-build-volume/titanium.swap
+          sudo fallocate -l 12G /mnt/titanium-build-volume/titanium.swap
           sudo chmod 600 /mnt/titanium-build-volume/titanium.swap
           sudo mkswap /mnt/titanium-build-volume/titanium.swap
           sudo swapon /mnt/titanium-build-volume/titanium.swap

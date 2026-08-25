@@ -27,6 +27,7 @@ google_default_client_id = "x"
 google_default_client_secret = "x"
 
 use_siso = true
+cc_wrapper = "ccache"
 use_login_database_as_backend = true
 build_contextual_search = false
 dcheck_always_on = false

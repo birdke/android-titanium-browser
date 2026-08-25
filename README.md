@@ -97,6 +97,8 @@ This repository provides the build script to compile on the latest Ubuntu, and m
 
 To build these releases yourself via CI (e.g. GitHub Actions), fork this repository. Supply your `base64` encoded `keystore.jks` and `local.properties` (containing `keyAlias`, `keyPassword` and `storePassword`) to [**Repository secrets**](https://github.com/jqssun/android-titanium-browser/blob/main/.github/workflows/build.yml#L49-L50) under **Settings** > **Secrets and variables** > **Actions**. To generate a release, go to **Actions**, select **Build**, and select **Run workflow**. Under **Runner**, you can either use a GitHub-hosted runner by entering `ubuntu-latest`, or `self-hosted` for your own hardware.
 
+This fork's x86_64 workflow works around the six-hour GitHub-hosted job limit by running three bounded compiler-cache warmup jobs followed by one final build/signing job. Each warmup stops after 270 minutes and passes a size-limited ccache checkpoint to the next job; a planned warmup timeout is therefore expected and is not treated as a build failure.
+
 ## Credits
 
 This project would not have been possible without the huge community contributions from [Vanadium](https://github.com/GrapheneOS/Vanadium), and without the privacy-focused, open-source approach shared by various other Chromium projects. All credit goes to the original authors and contributors. This project started around the same time as [Helium Browser for Linux](https://github.com/imputnet/helium-linux) but it is not affiliated with the desktop Helium project.

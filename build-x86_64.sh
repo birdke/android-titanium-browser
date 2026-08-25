@@ -27,10 +27,22 @@ export XDG_CACHE_HOME="$TITANIUM_BUILD_CACHE_DIR/xdg"
 export TMPDIR="$TITANIUM_BUILD_CACHE_DIR/tmp"
 
 sudo apt-get update
-sudo apt-get install -y sudo lsb-release file nano git curl python3 python3-pillow imagemagick librsvg2-bin unzip
+sudo apt-get install -y sudo lsb-release file nano git curl python3 python3-pillow imagemagick librsvg2-bin unzip ccache
 sudo dpkg --add-architecture i386
 sudo apt-get update
 sudo apt-get install -y libgcc-s1:i386
+
+export CCACHE_DIR=${CCACHE_DIR:-$SCRIPT_DIR/.ccache}
+export CCACHE_BASEDIR="$SCRIPT_DIR"
+export CCACHE_COMPILERCHECK=content
+export CCACHE_COMPRESS=true
+export CCACHE_COMPRESSLEVEL=3
+export CCACHE_DEPEND=true
+export CCACHE_MAXSIZE=9G
+export CCACHE_SLOPPINESS=time_macros,modules
+mkdir -p "$CCACHE_DIR"
+ccache --zero-stats
+ccache --show-config
 
 git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
 export PATH="$SCRIPT_DIR/depot_tools:$PATH"
@@ -64,7 +76,33 @@ cp "$SCRIPT_DIR/args-x86_64.gn" out/X64/args.gn
 gn gen out/X64
 mkdir -p out/tmp out/release
 
-autoninja -C out/X64 -j "$TITANIUM_BUILD_JOBS" chrome_public_apk
+build_status=0
+if [[ -n "${TITANIUM_BUILD_TIME_LIMIT:-}" ]]; then
+  set +e
+  timeout --signal=TERM --kill-after=120s "$TITANIUM_BUILD_TIME_LIMIT" \
+    autoninja -C out/X64 -j "$TITANIUM_BUILD_JOBS" chrome_public_apk
+  build_status=$?
+  set -e
+else
+  autoninja -C out/X64 -j "$TITANIUM_BUILD_JOBS" chrome_public_apk
+fi
+
+ccache --cleanup
+ccache --show-stats
+du -sh "$CCACHE_DIR"
+
+if (( build_status == 124 )) && [[ "${TITANIUM_ALLOW_INCOMPLETE_BUILD:-0}" == 1 ]]; then
+  echo "Stage ${TITANIUM_STAGE_NAME:-warmup} reached its planned time limit; saving the compiler cache checkpoint."
+  exit 0
+fi
+if (( build_status != 0 )); then
+  echo "Chromium build exited with status $build_status" >&2
+  exit "$build_status"
+fi
+if [[ "${TITANIUM_ALLOW_INCOMPLETE_BUILD:-0}" == 1 ]]; then
+  echo "Stage ${TITANIUM_STAGE_NAME:-warmup} completed the target early; saving its compiler cache checkpoint."
+  exit 0
+fi
 
 unsigned_apk=$(find out/X64/apks -maxdepth 1 -name 'Chrome*.apk' -print -quit)
 if [[ -z "$unsigned_apk" ]]; then

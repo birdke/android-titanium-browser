@@ -110,6 +110,7 @@ jobs:
           key: titanium-ccache-v1-${{ runner.os }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.stage_name }}
           restore-keys: |
             titanium-ccache-v1-${{ runner.os }}-${{ github.sha }}-
+            titanium-ccache-v1-${{ runner.os }}-
 
       - name: Build signed x86_64 APK
         env:
@@ -120,7 +121,7 @@ jobs:
           TITANIUM_ALLOW_INCOMPLETE_BUILD: ${{ inputs.warmup && '1' || '0' }}
           TITANIUM_BUILD_CACHE_DIR: ${{ github.workspace }}/.build-cache
           TITANIUM_BUILD_JOBS: ${{ inputs.build_jobs }}
-          TITANIUM_BUILD_TIME_LIMIT: ${{ inputs.warmup && '270m' || '' }}
+          TITANIUM_BUILD_TIME_LIMIT: ${{ inputs.warmup && '300m' || '' }}
           TITANIUM_STAGE_NAME: ${{ inputs.stage_name }}
           MALLOC_ARENA_MAX: '2'
         run: |

@@ -97,7 +97,7 @@ This repository provides the build script to compile on the latest Ubuntu, and m
 
 To build these releases yourself via CI (e.g. GitHub Actions), fork this repository. Supply your `base64` encoded `keystore.jks` and `local.properties` (containing `keyAlias`, `keyPassword` and `storePassword`) to [**Repository secrets**](https://github.com/jqssun/android-titanium-browser/blob/main/.github/workflows/build.yml#L49-L50) under **Settings** > **Secrets and variables** > **Actions**. To generate a release, go to **Actions**, select **Build**, and select **Run workflow**. Under **Runner**, you can either use a GitHub-hosted runner by entering `ubuntu-latest`, or `self-hosted` for your own hardware.
 
-This fork's x86_64 workflow works around the six-hour GitHub-hosted job limit by running three bounded compiler-cache warmup jobs followed by one final build/signing job. Each warmup stops after 270 minutes and passes a size-limited ccache checkpoint to the next job; a planned warmup timeout is therefore expected and is not treated as a build failure.
+This fork's x86_64 workflow works around the six-hour GitHub-hosted job limit by running four bounded compiler-cache warmup jobs followed by one final build/signing job. Each warmup stops after 300 minutes and passes a size-limited ccache checkpoint to the next job. Cache lookup also falls back across CI-only commits, while ccache still validates compiler inputs before every hit. A planned warmup timeout is therefore expected and is not treated as a build failure.
 
 ## Credits
 

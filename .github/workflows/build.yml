@@ -31,6 +31,7 @@ jobs:
   warm-cache-2:
     name: Warm compiler cache 2/4
     needs: warm-cache-1
+    if: ${{ needs.warm-cache-1.outputs.apk_ready != 'true' }}
     uses: ./.github/workflows/build-stage.yml
     with:
       build_jobs: ${{ inputs.build_jobs }}
@@ -41,6 +42,7 @@ jobs:
   warm-cache-3:
     name: Warm compiler cache 3/4
     needs: warm-cache-2
+    if: ${{ needs.warm-cache-2.outputs.apk_ready != 'true' }}
     uses: ./.github/workflows/build-stage.yml
     with:
       build_jobs: ${{ inputs.build_jobs }}
@@ -51,6 +53,7 @@ jobs:
   warm-cache-4:
     name: Warm compiler cache 4/4
     needs: warm-cache-3
+    if: ${{ needs.warm-cache-3.outputs.apk_ready != 'true' }}
     uses: ./.github/workflows/build-stage.yml
     with:
       build_jobs: ${{ inputs.build_jobs }}
@@ -60,7 +63,23 @@ jobs:
 
   build-x86_64:
     name: Build and sign x86_64 APK
-    needs: warm-cache-4
+    needs: [warm-cache-1, warm-cache-2, warm-cache-3, warm-cache-4]
+    if: >-
+      ${{
+        always() &&
+        needs.warm-cache-1.result != 'failure' &&
+        needs.warm-cache-1.result != 'cancelled' &&
+        needs.warm-cache-2.result != 'failure' &&
+        needs.warm-cache-2.result != 'cancelled' &&
+        needs.warm-cache-3.result != 'failure' &&
+        needs.warm-cache-3.result != 'cancelled' &&
+        needs.warm-cache-4.result != 'failure' &&
+        needs.warm-cache-4.result != 'cancelled' &&
+        needs.warm-cache-1.outputs.apk_ready != 'true' &&
+        needs.warm-cache-2.outputs.apk_ready != 'true' &&
+        needs.warm-cache-3.outputs.apk_ready != 'true' &&
+        needs.warm-cache-4.outputs.apk_ready != 'true'
+      }}
     uses: ./.github/workflows/build-stage.yml
     with:
       build_jobs: ${{ inputs.build_jobs }}

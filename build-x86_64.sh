@@ -100,8 +100,7 @@ if (( build_status != 0 )); then
   exit "$build_status"
 fi
 if [[ "${TITANIUM_ALLOW_INCOMPLETE_BUILD:-0}" == 1 ]]; then
-  echo "Stage ${TITANIUM_STAGE_NAME:-warmup} completed the target early; saving its compiler cache checkpoint."
-  exit 0
+  echo "Stage ${TITANIUM_STAGE_NAME:-warmup} completed the target early; signing the APK now."
 fi
 
 unsigned_apk=$(find out/X64/apks -maxdepth 1 -name 'Chrome*.apk' -print -quit)

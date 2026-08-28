@@ -17,6 +17,10 @@ on:
         required: true
       STORE_TEST_JKS:
         required: true
+    outputs:
+      apk_ready:
+        description: Whether this stage produced a signed x86_64 APK
+        value: ${{ jobs.stage.outputs.apk_ready }}
 
 permissions:
   contents: read
@@ -26,6 +30,8 @@ jobs:
     name: ${{ inputs.stage_name }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    outputs:
+      apk_ready: ${{ steps.apk-status.outputs.apk_ready }}
     steps:
       - name: Reclaim preinstalled runner space
         uses: endersonmenezes/free-disk-space@cc5a57aa862b7769888199b7e4e012b0c8440b92 # v3
@@ -121,7 +127,7 @@ jobs:
           TITANIUM_ALLOW_INCOMPLETE_BUILD: ${{ inputs.warmup && '1' || '0' }}
           TITANIUM_BUILD_CACHE_DIR: ${{ github.workspace }}/.build-cache
           TITANIUM_BUILD_JOBS: ${{ inputs.build_jobs }}
-          TITANIUM_BUILD_TIME_LIMIT: ${{ inputs.warmup && '300m' || '' }}
+          TITANIUM_BUILD_TIME_LIMIT: ${{ inputs.warmup && '240m' || '' }}
           TITANIUM_STAGE_NAME: ${{ inputs.stage_name }}
           MALLOC_ARENA_MAX: '2'
         run: |
@@ -150,21 +156,37 @@ jobs:
           chmod +x ./*.sh
           nice -n 5 ./build-x86_64.sh
 
-      - name: Save compiler cache checkpoint
-        if: ${{ inputs.warmup }}
-        uses: actions/cache/save@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
-        with:
-          path: ${{ github.workspace }}/.ccache
-          key: titanium-ccache-v1-${{ runner.os }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.stage_name }}
+      - name: Detect signed APK
+        id: apk-status
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apks=(chromium/src/out/release/*-x86_64.apk)
+          hashes=(chromium/src/out/release/*-x86_64.apk.sha256)
+          if (( ${#apks[@]} == 1 && ${#hashes[@]} == 1 )); then
+            echo "apk_ready=true" >> "$GITHUB_OUTPUT"
+            echo "Signed APK is ready for upload."
+          else
+            echo "apk_ready=false" >> "$GITHUB_OUTPUT"
+            echo "No signed APK yet; this stage produced a compiler-cache checkpoint."
+          fi
 
       - name: Upload signed APK
-        if: ${{ !inputs.warmup }}
+        if: ${{ steps.apk-status.outputs.apk_ready == 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: titanium-${{ github.run_id }}-x86_64
+          name: titanium-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.stage_name }}-x86_64
           path: |
             chromium/src/out/release/*-x86_64.apk
             chromium/src/out/release/*-x86_64.apk.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
+
+      - name: Save compiler cache checkpoint
+        if: ${{ inputs.warmup && steps.apk-status.outputs.apk_ready != 'true' }}
+        uses: actions/cache/save@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: titanium-ccache-v1-${{ runner.os }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.stage_name }}

@@ -151,4 +151,18 @@ if (content::WebContents::HasLiveWebContentsForBrowserContext(profile)) { return
 sed -i 's/|| mSupportedProfileType == SupportedProfileType.REGULAR) {/|| mSupportedProfileType == SupportedProfileType.REGULAR || mSupportedProfileType == SupportedProfileType.MIXED) {/' chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
 sed -i 's/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD) {/|| mSupportedProfileType == SupportedProfileType.OFF_THE_RECORD || mSupportedProfileType == SupportedProfileType.MIXED) {/' chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
 
+# The Vanadium bookmark import helper includes a Mojo-generated header through
+# bookmarks_file_importer.h. Declare the generator dependency explicitly so a
+# fast ccache build cannot compile the helper before that header exists.
+bookmark_android_build=chrome/browser/bookmarks/android/BUILD.gn
+if ! sed -n '/source_set("impl") {/,/^}/p' "$bookmark_android_build" |
+  grep -Fq '"//components/user_data_importer/mojom",'; then
+  sed -i '/^    "\/\/components\/query_parser",$/i\    "//components/user_data_importer/mojom",' "$bookmark_android_build"
+fi
+if ! sed -n '/source_set("impl") {/,/^}/p' "$bookmark_android_build" |
+  grep -Fq '"//components/user_data_importer/mojom",'; then
+  echo "Failed to add the bookmark Mojo generator dependency" >&2
+  return 1
+fi
+
 export PATCHED=1

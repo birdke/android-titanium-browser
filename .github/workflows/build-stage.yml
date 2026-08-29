@@ -124,10 +124,10 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
           LOCAL_TEST_JKS: ${{ secrets.LOCAL_TEST_JKS }}
           STORE_TEST_JKS: ${{ secrets.STORE_TEST_JKS }}
-          TITANIUM_ALLOW_INCOMPLETE_BUILD: ${{ inputs.warmup && '1' || '0' }}
+          TITANIUM_ALLOW_INCOMPLETE_BUILD: '1'
           TITANIUM_BUILD_CACHE_DIR: ${{ github.workspace }}/.build-cache
           TITANIUM_BUILD_JOBS: ${{ inputs.build_jobs }}
-          TITANIUM_BUILD_TIME_LIMIT: ${{ inputs.warmup && '240m' || '' }}
+          TITANIUM_BUILD_TIME_LIMIT: 300m
           TITANIUM_STAGE_NAME: ${{ inputs.stage_name }}
           MALLOC_ARENA_MAX: '2'
         run: |
@@ -185,8 +185,16 @@ jobs:
           retention-days: 1
 
       - name: Save compiler cache checkpoint
-        if: ${{ inputs.warmup && steps.apk-status.outputs.apk_ready != 'true' }}
+        if: ${{ steps.apk-status.outputs.apk_ready != 'true' }}
         uses: actions/cache/save@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
         with:
           path: ${{ github.workspace }}/.ccache
           key: titanium-ccache-v1-${{ runner.os }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.stage_name }}
+
+      - name: Mark incomplete final stage for retry
+        if: ${{ !inputs.warmup && steps.apk-status.outputs.apk_ready != 'true' }}
+        shell: bash
+        run: |
+          echo "The final stage reached its planned time limit before producing an APK." >&2
+          echo "Its compiler cache was saved; rerun failed jobs to continue from that checkpoint." >&2
+          exit 1

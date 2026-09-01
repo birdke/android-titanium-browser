@@ -73,6 +73,7 @@ git am --whitespace=nowarn --keep-non-patch "$SCRIPT_DIR"/vanadium/patches/*.pat
 gclient sync -D --no-history --nohooks
 gclient runhooks
 ./build/install-build-deps.sh --no-prompt
+validate_signing_key "$PWD/third_party/jdk/current/bin/keytool"
 
 source "$SCRIPT_DIR/patch.sh"
 cp "$SCRIPT_DIR/args-x86_64.gn" out/X64/args.gn

@@ -39,7 +39,10 @@ export CCACHE_COMPRESS=true
 export CCACHE_COMPRESSLEVEL=3
 export CCACHE_DEPEND=true
 export CCACHE_MAXSIZE=9G
-export CCACHE_SLOPPINESS=time_macros,modules
+# GN/Siso creates many generated headers immediately before their consumers.
+# The build graph already orders those writes, so allow identical header content
+# to be reused across fresh Actions workspaces despite new mtime/ctime values.
+export CCACHE_SLOPPINESS=time_macros,modules,include_file_ctime,include_file_mtime
 mkdir -p "$CCACHE_DIR"
 ccache --zero-stats
 ccache --show-config
@@ -88,7 +91,7 @@ else
 fi
 
 ccache --cleanup
-ccache --show-stats
+ccache --show-stats --verbose
 du -sh "$CCACHE_DIR"
 
 if (( build_status == 124 )) && [[ "${TITANIUM_ALLOW_INCOMPLETE_BUILD:-0}" == 1 ]]; then

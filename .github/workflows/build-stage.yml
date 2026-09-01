@@ -6,6 +6,9 @@ on:
       build_jobs:
         required: true
         type: string
+      build_time_limit:
+        required: true
+        type: string
       stage_name:
         required: true
         type: string
@@ -127,7 +130,7 @@ jobs:
           TITANIUM_ALLOW_INCOMPLETE_BUILD: '1'
           TITANIUM_BUILD_CACHE_DIR: ${{ github.workspace }}/.build-cache
           TITANIUM_BUILD_JOBS: ${{ inputs.build_jobs }}
-          TITANIUM_BUILD_TIME_LIMIT: 300m
+          TITANIUM_BUILD_TIME_LIMIT: ${{ inputs.build_time_limit }}
           TITANIUM_STAGE_NAME: ${{ inputs.stage_name }}
           MALLOC_ARENA_MAX: '2'
         run: |

@@ -12,6 +12,19 @@ on:
           - '2'
           - '3'
           - '4'
+      resume_only:
+        description: Skip warmups and resume the final job from the newest cache
+        required: true
+        type: boolean
+        default: false
+      build_time_limit:
+        description: Ninja time limit for each build stage
+        required: true
+        type: choice
+        default: 300m
+        options:
+          - 300m
+          - 325m
 
 permissions:
   contents: read
@@ -21,9 +34,11 @@ permissions:
 jobs:
   warm-cache-1:
     name: Warm compiler cache 1/4
+    if: ${{ !inputs.resume_only }}
     uses: ./.github/workflows/build-stage.yml
     with:
       build_jobs: ${{ inputs.build_jobs }}
+      build_time_limit: ${{ inputs.build_time_limit }}
       stage_name: warm-1
       warmup: true
     secrets: inherit
@@ -35,6 +50,7 @@ jobs:
     uses: ./.github/workflows/build-stage.yml
     with:
       build_jobs: ${{ inputs.build_jobs }}
+      build_time_limit: ${{ inputs.build_time_limit }}
       stage_name: warm-2
       warmup: true
     secrets: inherit
@@ -46,6 +62,7 @@ jobs:
     uses: ./.github/workflows/build-stage.yml
     with:
       build_jobs: ${{ inputs.build_jobs }}
+      build_time_limit: ${{ inputs.build_time_limit }}
       stage_name: warm-3
       warmup: true
     secrets: inherit
@@ -57,6 +74,7 @@ jobs:
     uses: ./.github/workflows/build-stage.yml
     with:
       build_jobs: ${{ inputs.build_jobs }}
+      build_time_limit: ${{ inputs.build_time_limit }}
       stage_name: warm-4
       warmup: true
     secrets: inherit
@@ -83,6 +101,7 @@ jobs:
     uses: ./.github/workflows/build-stage.yml
     with:
       build_jobs: ${{ inputs.build_jobs }}
+      build_time_limit: ${{ inputs.build_time_limit }}
       stage_name: final
       warmup: false
     secrets: inherit

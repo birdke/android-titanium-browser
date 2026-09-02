@@ -68,7 +68,11 @@ rm -rf "$SCRIPT_DIR"/vanadium/patches/*{pdf,PDF,for-content-public,toolbar-butto
 replace "$SCRIPT_DIR/vanadium/patches" "VANADIUM" "TITANIUM"
 replace "$SCRIPT_DIR/vanadium/patches" "Vanadium" "Titanium"
 replace "$SCRIPT_DIR/vanadium/patches" "vanadium" "titanium"
-git am --whitespace=nowarn --keep-non-patch "$SCRIPT_DIR"/vanadium/patches/*.patch
+# Reuse each patch's fixed author date as the committer date. Otherwise every
+# fresh runner creates a different Chromium HEAD and invalidates generated
+# version headers in ccache even though the source tree is identical.
+git am --committer-date-is-author-date --whitespace=nowarn --keep-non-patch \
+  "$SCRIPT_DIR"/vanadium/patches/*.patch
 
 gclient sync -D --no-history --nohooks
 gclient runhooks

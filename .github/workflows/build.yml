@@ -27,7 +27,7 @@ on:
           - 325m
 
 permissions:
-  contents: read
+  contents: write
 
 # Standard GitHub-hosted jobs have a hard six-hour limit. Seed a shared ccache
 # in bounded jobs, then perform the final link/package job from the warm cache.

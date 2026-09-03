@@ -1,0 +1,143 @@
+name: Follow upstream Titanium releases
+
+on:
+  schedule:
+    - cron: '37 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: titanium-upstream-release-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: jqssun/android-titanium-browser
+  TARGET_BRANCH: x86_64-actions
+  BUILD_WORKFLOW: build.yml
+
+jobs:
+  sync-and-dispatch:
+    name: Sync release and start x86_64 build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout x86_64 branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
+          fetch-depth: 0
+          submodules: false
+
+      - name: Find latest published upstream release
+        id: upstream
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          upstream_tag=$(gh api "repos/${UPSTREAM_REPOSITORY}/releases/latest" --jq '.tag_name')
+          if [[ ! "$upstream_tag" =~ ^v[0-9]+(\.[0-9]+){3}$ ]]; then
+            echo "Unexpected upstream release tag: $upstream_tag" >&2
+            exit 2
+          fi
+
+          echo "tag=$upstream_tag" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${upstream_tag}-x86_64" >> "$GITHUB_OUTPUT"
+          echo "Latest published upstream release: $upstream_tag"
+
+      - name: Merge upstream release
+        id: sync
+        shell: bash
+        env:
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          upstream_url="https://github.com/${UPSTREAM_REPOSITORY}.git"
+          if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream "$upstream_url"
+          else
+            git remote add upstream "$upstream_url"
+          fi
+          git fetch --no-tags upstream "refs/tags/${UPSTREAM_TAG}"
+          upstream_commit=$(git rev-parse 'FETCH_HEAD^{commit}')
+          echo "upstream_commit=$upstream_commit" >> "$GITHUB_OUTPUT"
+
+          if git merge-base --is-ancestor "$upstream_commit" HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "$UPSTREAM_TAG is already contained in $TARGET_BRANCH."
+            exit 0
+          fi
+
+          if ! git merge --no-ff --no-edit \
+            -m "chore: sync upstream ${UPSTREAM_TAG}" "$upstream_commit"; then
+            conflicts=$(git diff --name-only --diff-filter=U | paste -sd ', ' -)
+            git merge --abort || true
+            echo "::error title=Upstream merge conflict::${UPSTREAM_TAG} conflicts in ${conflicts:-unknown files}"
+            exit 3
+          fi
+
+          git push origin "HEAD:refs/heads/${TARGET_BRANCH}"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "Merged $UPSTREAM_TAG ($upstream_commit) into $TARGET_BRANCH."
+
+      - name: Start build when release is missing
+        id: dispatch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.upstream.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "build_started=false" >> "$GITHUB_OUTPUT"
+            echo "Release $RELEASE_TAG already exists; no build is needed."
+            exit 0
+          fi
+
+          active_runs=$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "$BUILD_WORKFLOW" \
+            --branch "$TARGET_BRANCH" \
+            --limit 100 \
+            --json status \
+            --jq '[.[] | select(.status != "completed")] | length')
+          if (( active_runs > 0 )); then
+            echo "build_started=false" >> "$GITHUB_OUTPUT"
+            echo "An x86_64 build is already queued or running; skipping duplicate dispatch."
+            exit 0
+          fi
+
+          gh workflow run "$BUILD_WORKFLOW" \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$TARGET_BRANCH" \
+            --field build_jobs=4 \
+            --field resume_only=false \
+            --field build_time_limit=300m
+          echo "build_started=true" >> "$GITHUB_OUTPUT"
+          echo "Dispatched $BUILD_WORKFLOW for $RELEASE_TAG."
+
+      - name: Write summary
+        if: ${{ always() }}
+        shell: bash
+        env:
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+          RELEASE_TAG: ${{ steps.upstream.outputs.release_tag }}
+          UPSTREAM_COMMIT: ${{ steps.sync.outputs.upstream_commit }}
+          SYNC_CHANGED: ${{ steps.sync.outputs.changed }}
+          BUILD_STARTED: ${{ steps.dispatch.outputs.build_started }}
+        run: |
+          {
+            echo '## Titanium upstream check'
+            echo
+            echo "- Upstream release: ${UPSTREAM_TAG:-unavailable}"
+            echo "- Upstream commit: ${UPSTREAM_COMMIT:-unavailable}"
+            echo "- x86_64 release: ${RELEASE_TAG:-unavailable}"
+            echo "- Branch updated: ${SYNC_CHANGED:-false}"
+            echo "- Build dispatched: ${BUILD_STARTED:-false}"
+          } >> "$GITHUB_STEP_SUMMARY"

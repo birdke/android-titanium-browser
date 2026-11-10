@@ -31,7 +31,7 @@ permissions:
 jobs:
   stage:
     name: ${{ inputs.stage_name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
     outputs:
       apk_ready: ${{ steps.apk-status.outputs.apk_ready }}
@@ -48,7 +48,7 @@ jobs:
           remove_packages_one_command: true
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia* /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle* /usr/local/bin/azcopy /usr/share/kotlinc /usr/share/apache-maven-* /usr/local/share/gecko_driver"
 
-      - name: Combine root and /mnt free space
+      - name: Prepare workspace for the runner disk layout
         shell: bash
         run: |
           set -euo pipefail
@@ -57,35 +57,51 @@ jobs:
           sudo apt-get install -y git lvm2
 
           gib=$((1024 * 1024 * 1024))
-          root_free=$(df --output=avail -B1 / | tail -1 | tr -d ' ')
-          mnt_free=$(df --output=avail -B1 /mnt | tail -1 | tr -d ' ')
-          root_image=$((root_free - 8 * gib))
-          mnt_image=$((mnt_free - 1 * gib))
-          if (( root_image < gib || mnt_image < gib )); then
-            echo "Not enough space to create the build volume" >&2
-            df -hT
-            exit 10
+          root_device=$(stat -c %d /var/tmp)
+          mnt_device=$(stat -c %d /mnt)
+          findmnt -T /var/tmp
+          findmnt -T /mnt
+          if [[ "$root_device" == "$mnt_device" ]]; then
+            # Newer runners keep /mnt on the root filesystem. Use its real capacity.
+            echo "/var/tmp and /mnt share a filesystem; keeping the native workspace."
+            swap_file=/mnt/titanium.swap
+            swap_size=8G
+            reserve_bytes=$((8 * gib))
+          else
+            root_free=$(df --output=avail -B1 /var/tmp | tail -1 | tr -d ' ')
+            mnt_free=$(df --output=avail -B1 /mnt | tail -1 | tr -d ' ')
+            root_image=$((root_free - 8 * gib))
+            mnt_image=$((mnt_free - 1 * gib))
+            if (( root_image < gib || mnt_image < gib )); then
+              echo "Not enough space to create the build volume" >&2
+              df -hT
+              exit 10
+            fi
+
+            # Allocate backing blocks now, rather than advertising sparse capacity.
+            sudo fallocate -l "$root_image" /var/tmp/titanium-root.img
+            sudo fallocate -l "$mnt_image" /mnt/titanium-mnt.img
+            root_loop=$(sudo losetup -f --show /var/tmp/titanium-root.img)
+            mnt_loop=$(sudo losetup -f --show /mnt/titanium-mnt.img)
+            sudo pvcreate "$root_loop" "$mnt_loop"
+            sudo vgcreate titanium-build-vg "$root_loop" "$mnt_loop"
+            sudo lvcreate -n workspace -l 100%FREE titanium-build-vg
+            sudo mkfs.ext4 -F -m 0 -E nodiscard /dev/titanium-build-vg/workspace
+
+            sudo mkdir -p /mnt/titanium-build-volume
+            sudo mount /dev/titanium-build-vg/workspace /mnt/titanium-build-volume
+            sudo mkdir -p /mnt/titanium-build-volume/workspace "$GITHUB_WORKSPACE"
+            sudo chown -R "$USER:$(id -gn)" /mnt/titanium-build-volume/workspace
+            sudo mount --bind /mnt/titanium-build-volume/workspace "$GITHUB_WORKSPACE"
+            swap_file=/mnt/titanium-build-volume/titanium.swap
+            swap_size=24G
+            reserve_bytes=0
           fi
 
-          sudo truncate -s "$root_image" /var/tmp/titanium-root.img
-          sudo truncate -s "$mnt_image" /mnt/titanium-mnt.img
-          root_loop=$(sudo losetup -f --show /var/tmp/titanium-root.img)
-          mnt_loop=$(sudo losetup -f --show /mnt/titanium-mnt.img)
-          sudo pvcreate "$root_loop" "$mnt_loop"
-          sudo vgcreate titanium-build-vg "$root_loop" "$mnt_loop"
-          sudo lvcreate -n workspace -l 100%FREE titanium-build-vg
-          sudo mkfs.ext4 -F -m 0 /dev/titanium-build-vg/workspace
-
-          sudo mkdir -p /mnt/titanium-build-volume
-          sudo mount /dev/titanium-build-vg/workspace /mnt/titanium-build-volume
-          sudo mkdir -p /mnt/titanium-build-volume/workspace "$GITHUB_WORKSPACE"
-          sudo chown -R "$USER:$(id -gn)" /mnt/titanium-build-volume/workspace
-          sudo mount --bind /mnt/titanium-build-volume/workspace "$GITHUB_WORKSPACE"
-
-          sudo fallocate -l 24G /mnt/titanium-build-volume/titanium.swap
-          sudo chmod 600 /mnt/titanium-build-volume/titanium.swap
-          sudo mkswap /mnt/titanium-build-volume/titanium.swap
-          sudo swapon /mnt/titanium-build-volume/titanium.swap
+          sudo fallocate -l "$swap_size" "$swap_file"
+          sudo chmod 600 "$swap_file"
+          sudo mkswap "$swap_file"
+          sudo swapon "$swap_file"
           sudo sysctl -w vm.swappiness=80
 
           mapfile -t runner_pids < <(pgrep -f 'Runner\.(Listener|Worker)' || true)
@@ -96,9 +112,9 @@ jobs:
           done
           echo "Protected runner PIDs: ${runner_pids[*]:-none}"
 
-          available_gib=$(df --output=avail -BG "$GITHUB_WORKSPACE" | tail -1 | tr -dc '0-9')
-          if (( available_gib < 108 )); then
-            echo "Expanded workspace has only ${available_gib} GiB available" >&2
+          available_bytes=$(df --output=avail -B1 "$GITHUB_WORKSPACE" | tail -1 | tr -d ' ')
+          if (( available_bytes < 108 * gib + reserve_bytes )); then
+            echo "Workspace needs 108 GiB plus the filesystem reserve after swap allocation." >&2
             df -hT
             exit 11
           fi
@@ -137,27 +153,77 @@ jobs:
           set -euo pipefail
           echo 250 | sudo tee "/proc/$$/oom_score_adj" >/dev/null
 
+          diagnostics_dir="$RUNNER_TEMP/titanium-diagnostics"
+          mkdir -p "$diagnostics_dir" || true
+          resource_snapshot() {
+            echo "::group::Resource snapshot $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            free -h || true
+            swapon --show || true
+            df -hT / /mnt "$GITHUB_WORKSPACE" || true
+            df -i / /mnt "$GITHUB_WORKSPACE" || true
+            for resource in cpu memory io; do
+              echo "Pressure: $resource"
+              cat "/proc/pressure/$resource" || true
+            done
+            ps -eo pid,ppid,ni,%cpu,%mem,rss,comm --sort=-rss | head -n 12 || true
+            sudo dmesg --ctime --since '2 minutes ago' || true
+            echo "::endgroup::"
+          }
           monitor_resources() {
             while true; do
-              echo "::group::Resource snapshot $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-              free -h
-              swapon --show
-              df -h "$GITHUB_WORKSPACE"
-              ps -eo pid,ppid,ni,%cpu,%mem,rss,comm --sort=-rss | head -n 12 || true
-              echo "::endgroup::"
-              sleep 300
+              resource_snapshot 2>&1 | tee -a "$diagnostics_dir/resources.log" ||
+                echo "::warning::Could not persist a resource snapshot; continuing console diagnostics."
+              sleep 60
             done
           }
           monitor_resources &
           resource_monitor_pid=$!
           cleanup_monitor() {
+            build_status=$?
+            trap - EXIT
             kill "$resource_monitor_pid" 2>/dev/null || true
             wait "$resource_monitor_pid" 2>/dev/null || true
+            echo "Build shell exit status: $build_status" | tee -a "$diagnostics_dir/resources.log" || true
+            resource_snapshot 2>&1 | tee -a "$diagnostics_dir/resources.log" || true
+            exit "$build_status"
           }
           trap cleanup_monitor EXIT
+          trap 'exit 143' TERM
+          trap 'exit 130' INT
 
           chmod +x ./*.sh
           nice -n 5 ./build-x86_64.sh
+
+      - name: Collect final runner diagnostics
+        if: ${{ always() }}
+        continue-on-error: true
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/titanium-diagnostics" || true
+          {
+            date -u
+            df -hT || true
+            df -i || true
+            free -h || true
+            swapon --show || true
+            findmnt -T /var/tmp || true
+            findmnt -T /mnt || true
+            sudo losetup --list || true
+            sudo dmesg --ctime | tail -n 300 || true
+          } 2>&1 | tee "$RUNNER_TEMP/titanium-diagnostics/final.log" ||
+            echo "::warning::Could not persist final diagnostics; see the console output."
+
+      - name: Upload runner diagnostics
+        if: ${{ always() }}
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: titanium-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.stage_name }}
+          path: ${{ runner.temp }}/titanium-diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Detect signed APK
         id: apk-status

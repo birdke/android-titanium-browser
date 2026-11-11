@@ -18,7 +18,7 @@ on:
         type: boolean
         default: false
       build_time_limit:
-        description: Ninja time limit for each build stage
+        description: Build-script time limit per stage (includes source preparation)
         required: true
         type: choice
         default: 300m

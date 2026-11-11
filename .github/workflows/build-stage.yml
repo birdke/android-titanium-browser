@@ -36,6 +36,12 @@ jobs:
     outputs:
       apk_ready: ${{ steps.apk-status.outputs.apk_ready }}
     steps:
+      - name: Set build deadline
+        shell: bash
+        run: |
+          # Include runner setup in the budget and leave 30 minutes for checkpoints.
+          echo "TITANIUM_JOB_BUILD_DEADLINE=$(( $(date +%s) + 330 * 60 ))" >> "$GITHUB_ENV"
+
       - name: Reclaim preinstalled runner space
         uses: endersonmenezes/free-disk-space@cc5a57aa862b7769888199b7e4e012b0c8440b92 # v3
         with:
@@ -140,6 +146,7 @@ jobs:
       - name: Build signed x86_64 APK
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 9G
           DEBIAN_FRONTEND: noninteractive
           LOCAL_TEST_JKS: ${{ secrets.LOCAL_TEST_JKS }}
           STORE_TEST_JKS: ${{ secrets.STORE_TEST_JKS }}
@@ -191,8 +198,36 @@ jobs:
           trap 'exit 143' TERM
           trap 'exit 130' INT
 
+          remaining_seconds=$((TITANIUM_JOB_BUILD_DEADLINE - $(date +%s)))
+          if (( remaining_seconds <= 0 )); then
+            echo "Runner setup exhausted the build budget before the build script started." >&2
+            exit 1
+          fi
+          if [[ ! "$TITANIUM_BUILD_TIME_LIMIT" =~ ^([1-9][0-9]*)m$ ]]; then
+            echo "Build-script time limit must be a positive integer number of minutes." >&2
+            exit 2
+          fi
+          requested_seconds=$((10#${BASH_REMATCH[1]} * 60))
+          if (( remaining_seconds > requested_seconds )); then
+            remaining_seconds=$requested_seconds
+          fi
+          echo "Build script has ${remaining_seconds}s left before the checkpoint deadline."
           chmod +x ./*.sh
-          nice -n 5 ./build-x86_64.sh
+          set +e
+          # Use one timeout process group for source preparation and compilation.
+          timeout --signal=TERM --kill-after=120s "${remaining_seconds}s" \
+            env -u TITANIUM_BUILD_TIME_LIMIT nice -n 5 ./build-x86_64.sh
+          build_status=$?
+          set -e
+          if (( build_status == 124 )); then
+            echo "The whole-job build budget was reached; saving the compiler cache checkpoint."
+            if command -v ccache >/dev/null 2>&1; then
+              ccache --cleanup
+              ccache --show-stats --verbose
+            fi
+          elif (( build_status != 0 )); then
+            exit "$build_status"
+          fi
 
       - name: Collect final runner diagnostics
         if: ${{ always() }}

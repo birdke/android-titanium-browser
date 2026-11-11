@@ -28,6 +28,19 @@ The hosted-runner profile defaults to four compile jobs, protects the Actions
 runner processes from the OOM killer, and runs the compiler at a lower CPU
 priority so the runner can keep reporting status under heavy load.
 
+Each stage records a deadline in its first step: 330 minutes for runner setup
+and the build script, leaving about 30 minutes before the hosted job's
+six-hour limit for cache upload, diagnostics, and other finishing steps. The
+build script is timed using the smaller of the remaining budget and the
+requested 300/325-minute limit. This includes source downloads, dependency
+installation, compilation, and signing. CI uses a single timeout process group;
+the build script's separate Ninja timer is disabled for this invocation. Local
+builds can still use `TITANIUM_BUILD_TIME_LIMIT` to limit Ninja alone.
+A planned timeout saves a compiler-cache checkpoint and allows the next
+warmup stage to continue; other build errors remain failures. This preserves
+compiler-cache entries, not the full source tree or build output. Forced
+termination or platform restrictions may still prevent checkpoint upload.
+
 Every minute, the build logs memory, swap, underlying and workspace filesystem
 capacity and inode usage, CPU/memory/I/O pressure, top processes, and recent
 kernel messages. It also attempts a final snapshot and uploads diagnostics
